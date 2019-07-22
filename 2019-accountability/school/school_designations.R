@@ -1,22 +1,28 @@
 # 2019 School Designations (Focus, Reward, Priority Exit)
 # Josh Carson
-# Last Updated: 2019-07-17
+# Last Updated: 2019-07-22
 
 library(magrittr)
 library(openxlsx)
 library(tidyverse)
 
 # Resume on line ___
+# Current commit: Add 2019 accountability data.
 # Search for "Q:" to find questions.
 
-# Data ------------------------------------------------------------------------
+# Functions ----
 
-# 2016 and 2017 Success Rates
-accountability_2017 <-
-  read_csv("N:/ORP_accountability/data/2017_final_accountability_files/school_numeric_2017_JW_10242017.csv")
+domain <- function(df, ...) {enquos(...) %>% map(~ count(df, !!! .x))}
 
-accountability_2018 <-
-  read_csv("N:/ORP_accountability/data/2018_final_accountability_files/2018_school_accountability_file.csv")
+# Data ----
+
+accountability <-
+    list(
+        "file_2017" = "N:/ORP_accountability/data/2017_final_accountability_files/school_numeric_2017_JW_10242017.csv",
+        "file_2018" = "N:/ORP_accountability/data/2018_final_accountability_files/2018_school_accountability_file.csv",
+        "file_2019" ="N:/ORP_accountability/data/2019_final_accountability_files/school_accountability_file_AM.csv" 
+    ) %>%
+    map(read_csv)
 
 grades_2018 <-
   read_csv("N:/ORP_accountability/projects/2018_school_accountability/school_grading_grades.csv")
@@ -43,8 +49,8 @@ tvaas_level_2018 <-
   read.xlsx("N:/ORP_accountability/data/2018_tvaas/School Composite Level.xlsx") %>%
   janitor::clean_names()
 
-student_groups_tsi <-
-  accountability_2018 %>%
+subgroups_tsi <-
+  accountability$file_2018 %>%
   distinct(subgroup) %>%
   filter(!subgroup %in% c("All Students", "English Learners",
                           "Super Subgroup")) %>%
@@ -59,7 +65,7 @@ student_groups_tsi <-
 
 s <-
   metrics_2018 %>%
-  filter(subgroup %in% student_groups_tsi) %>%
+  filter(subgroup %in% subgroups_tsi) %>%
   distinct(subgroup)
 
 stopifnot(nrow(s) == 10)
@@ -150,32 +156,38 @@ list(metrics_group, focus_group) %>%
 
 # ATSI ------------------------------------------------------------------------
 
-# In the 2017 numeric file, there are multiple grade levels within some
-# school-subject-subgroup combinations. Grade levels are mutually exclusive,
-# though, so ostensibly students will not be double-counted below.
+map(accountability, names)
 
-accountability_2017 %>%
-  group_by(year) %>%
-  summarize(
-    n_school = n_distinct(system, school),
-    n_subject = n_distinct(system, school, subject),
-    n_subgroup = n_distinct(system, school, subject, subgroup),
-    n_grade = n_distinct(system, school, subject, subgroup, grade),
-    n_row = n()
-  )
+accountability <-
+    accountability %>%
+    map_at("file_2018", ~ mutate(.x, year = 2018)) %>%
+    map_at("file_2019", ~ mutate(.x, year = 2019))
 
-list(accountability_2017, mutate(accountability_2018, year = 2018)) %>%
-  map(~ .x %>% distinct(year, subgroup) %>% mutate(present = 1)) %>%
-  reduce(bind_rows) %>%
-  spread(year, present) %>%
-  arrange(subgroup) %>%
-  View()
+accountability %>%
+    map(~ .x %>% distinct(year, subgroup) %>% mutate(present = 1)) %>%
+    reduce(bind_rows) %>%
+    spread(year, present) %>%
+    arrange(subgroup) %>%
+    View()
 
-# black_2018 <- "Black or African American"
-el_2018 <- "English Learners with Transitional 1-4"
-# hpi_2018 <- "Native Hawaiian or Other Pacific Islander"
+label_el <- "English Learners with Transitional 1-4"
 
-accountability_2017 %>% distinct(year, grade) %>% arrange(year, grade)
+accountability %>%
+    map_at(c(1, 3), ~ domain(.x, grade))
+
+count(accountability$file_2017, year, subject, grade)
+
+pools_2019 <-
+    accountability$file_2019 %>%
+    distinct(system, school, pool)
+
+schools_eligible_2018 <-
+    accountability$file_2018 %>%
+    filter(
+        designation_ineligible == 0,
+        indicator == "Achievement"
+    ) %>%
+    distinct(system, school)
 
 # Rule 2, Footnote 16: Three Years of Data
 # 2019 ATSI designations will rely upon data from 2016-17, 2017-18, and 2018-19.
@@ -186,65 +198,56 @@ accountability_2017 %>% distinct(year, grade) %>% arrange(year, grade)
 # ineligible in 2017 and/or 2018? (Is this even possible?)
 
 success_rate_group <-
-  accountability_2018 %>%
-  # Accountability content areas pre-2019: ELA, Math, and Science
-  filter(
-    designation_ineligible == 0,
-    indicator == "Achievement"
-    # n_count >= 30 (This filter happens below, after pooling across years.)
-  ) %>%
-  transmute(
-    year = 2018,
-    system, school, subgroup,
-    n_otm = round(n_count * metric / 100),
-    n_total = n_count,
-    success_rate = metric
-  ) %>%
-  bind_rows(
-    accountability_2017 %>%
-      filter(!subject %in% c("ACT", "Graduation Rate", "Social Studies")) %>%
-      mutate(
-        # Q: How should we compare ELs across years?
-        subgroup =
-          if_else(subgroup == "English Language Learners with T1/T2",
-                  "English Learners with Transitional 1-4",
-                  subgroup)
-        # subgroup =
-        #   case_when(subgroup == "Black" ~ black_2018,
-        #             str_detect(subgroup, "^English Language") ~ el_2018,
-        #             str_detect(subgroup, "^Hawaii") ~ hpi_2018)
-      ) %>%
-      inner_join(
-        accountability_2018 %>%
-          filter(
-            designation_ineligible == 0,
-            indicator == "Achievement"
-            # n_count >= 30 (This filter happens below.)
-          ) %>%
-          distinct(system, school, subgroup),
-        by = c("system", "school", "subgroup")
-      ) %>%
-      # Sum student counts across subjects and grade levels.
-      group_by(system, school, subgroup, year) %>%
-      summarize(
-        n_otm = sum(n_ontrack_prof) + sum(n_mastered_adv),
-        n_total = sum(valid_tests)
-      ) %>%
-      ungroup() %>%
-      mutate(success_rate = 100 * n_otm / n_total)
-  ) %>%
-  filter(subgroup %in% student_groups_tsi) %>%
-  # Q: Is it okay to assign each school its 2018 pool?
-  left_join(
-    accountability_2018 %>% select(system, school, pool) %>% distinct(),
-    by = c("system", "school")
-  ) %>%
-  mutate(
-    n_otm = if_else(n_total == 0, 0, n_otm),
-    success_rate = if_else(n_total == 0, NA_real_, success_rate)
-  ) %>%
-  select(system, school, pool, subgroup, year, everything()) %>%
-  arrange(system, school, subgroup, year)
+    accountability %>%
+    map_at(
+        1,
+        ~ .x %>%
+            filter(
+                year == 2017,
+                !subject %in% c("ACT", "Graduation Rate", "Social Studies")
+            ) %>%
+            mutate(
+                # Q: How should we compare ELs across years?
+                subgroup = if_else(
+                    subgroup == "English Language Learners with T1/T2",
+                    label_el,
+                    subgroup
+                )
+            ) %>%
+            inner_join(schools_eligible_2018) %>%
+            # Sum student counts across subjects and grade levels.
+            group_by(system, school, subgroup, year) %>%
+            summarize(
+                n_otm = sum(n_ontrack_prof) + sum(n_mastered_adv),
+                n_total = sum(valid_tests)
+            ) %>%
+            ungroup() %>%
+            mutate(success_rate = 100 * n_otm / n_total)
+    ) %>%
+    map_at(
+        2:3,
+        ~ .x %>%
+            filter(
+                designation_ineligible == 0,
+                indicator == "Achievement"
+            ) %>%
+            transmute(
+                system, school, subgroup, year,
+                n_otm = round(n_count * metric / 100),
+                n_total = n_count,
+                success_rate = metric
+            )
+    ) %>%
+    reduce(bind_rows) %>%
+    filter(subgroup %in% subgroups_tsi) %>%
+    # Q: Is it okay to assign each school its 2018 pool?
+    left_join(pools_2019) %>%
+    mutate(
+        n_otm = if_else(n_total == 0, 0, n_otm),
+        success_rate = if_else(n_total == 0, NA_real_, success_rate)
+    ) %>%
+    select(system, school, pool, subgroup, year, everything()) %>%
+    arrange(system, school, subgroup, year)
 
 t <- success_rate_group
 stopifnot(n_distinct(t$system, t$school, t$pool, t$subgroup, t$year) == nrow(t))
@@ -279,7 +282,7 @@ s <-
   arrange(subgroup) %>%
   extract2("subgroup")
 
-stopifnot(s == student_groups_tsi)
+stopifnot(s == subgroups_tsi)
 rm(s)
 
 # Q: To remove ASD schools not in the bottom 5%, I removed non-Priority ASD
@@ -343,7 +346,7 @@ priority_success_rate_cutoff_hs <-
   extract2("max")
 
 priority_exit_success_grad <-
-  accountability_2018 %>%
+  accountability$file_2019 %>%
   # All Students for Success Rates and Graduation Rate
   # Rule 1, Line 37
   # Rule 2, Line 39
