@@ -1,13 +1,13 @@
 # 2019 School Designations (Focus, Reward, Priority Exit)
 # Josh Carson
-# Last Updated: 2019-07-22
+# Last Updated: 2019-07-23
 
 library(magrittr)
 library(openxlsx)
 library(tidyverse)
 
 # Resume on line ___
-# Current commit: Add 2019 accountability data.
+# Current commit: ___
 # Search for "Q:" to find questions.
 
 # Functions ----
@@ -62,6 +62,7 @@ subgroups_tsi <-
 # Focus Rule 1, Line 61: 10 Student Groups
 
 # Q: Why do the file layouts on TNShare list 11 groups?
+# Double English Learner groups, not a problem
 
 s <-
   metrics_2018 %>%
@@ -76,6 +77,8 @@ metrics_group <-
   filter(
     designation_ineligible == 0,
     # Q: Should subgroup_score:focus be null where subgroup == "All Students"?
+    # No. Calculate overall scores, percentiles for All Students, as well as a
+    # school-level Focus indicator.
     subgroup != "Subgroups",
     # Rule 1, Line 67: Eligibility for All Indicators
     total_weight == 1
@@ -193,11 +196,12 @@ schools_eligible_2018 <-
 # 2019 ATSI designations will rely upon data from 2016-17, 2017-18, and 2018-19.
 
 # Q: How do we handle a school without three years of achievement data?
-
-# Q: How do we handle a school that is designation-eligible in 2019 but
-# ineligible in 2017 and/or 2018? (Is this even possible?)
+# At least two years of data, should be accounted for in designation_ineligible
 
 success_rate_group <-
+    # Confirm that this file already filters out small samples (grouped by
+    # year, pool, grade band, and content area [ELA, Math, HS English, or HS
+    # Math]).
     accountability %>%
     map_at(
         1,
@@ -207,7 +211,6 @@ success_rate_group <-
                 !subject %in% c("ACT", "Graduation Rate", "Social Studies")
             ) %>%
             mutate(
-                # Q: How should we compare ELs across years?
                 subgroup = if_else(
                     subgroup == "English Language Learners with T1/T2",
                     label_el,
@@ -240,7 +243,6 @@ success_rate_group <-
     ) %>%
     reduce(bind_rows) %>%
     filter(subgroup %in% subgroups_tsi) %>%
-    # Q: Is it okay to assign each school its 2018 pool?
     left_join(pools_2019) %>%
     mutate(
         n_otm = if_else(n_total == 0, 0, n_otm),
@@ -256,23 +258,27 @@ rm(t)
 success_rate_group <-
   success_rate_group %>%
   # Q: Here should I filter out schools without three years of data?
+    # No need, see note above
   # mutate(year_count = 1) %>%
   group_by(system, school, pool, subgroup) %>%
   summarize_at(vars(n_otm, n_total), sum) %>% # Potentially add year_count.
   # Q: Is it correct to filter out small groups AFTER pooling across years?
+    # No, see note above
   filter(n_total >= 30) %>%
   mutate(
     success_rate =
       if_else(n_total == 0, NA_real_, 100 * n_otm / n_total + 1e-9)
   ) %>%
-  group_by(pool, subgroup) %>%
-  mutate(
-    rank = rank(success_rate, na.last = "keep", ties.method = "min"),
-    # Q: Which schools should we include in this denominator?
-    n_schools = n(),
-    subgroup_score_percentile = 100 * rank / n_schools
-  ) %>%
-  ungroup() %>%
+    # This is all for ATSI exit.
+  # group_by(pool, subgroup) %>%
+  # mutate(
+  #   rank = rank(success_rate, na.last = "keep", ties.method = "min"),
+  #   # Q: Which schools should we include in this denominator?
+  #   # Just
+  #   n_schools = n(),
+  #   subgroup_score_percentile = 100 * rank / n_schools
+  # ) %>%
+  # ungroup() %>%
   arrange(system, school, subgroup)
 
 # Check for consistent student groups.
@@ -295,6 +301,8 @@ csi_success_rate_cutoffs <-
   # This filter is a conservative step to make sure we don't base the HS
   # cut-off on a school not identified for success rate. Adding this filter
   # reduced the number of ATSI schools from 59 to 55.
+    # Keep schools identified for grad rate but with percentiles < 5 or <
+    # max percentile of non-grad-rate HS.
   filter(is.na(grad_less_than_67)) %>%
   left_join(
     schools_priority_2018 %>% select(system, school, priority),
@@ -354,6 +362,7 @@ priority_exit_success_grad <-
     indicator %in% c("Achievement", "Graduation Rate"),
     subgroup == "All Students"
     # Q: Should I filter out designation-ineligible schools here?
+    # Y
   ) %>%
   group_by(indicator) %>%
   nest() %>%
@@ -439,7 +448,7 @@ priority_exit_tvaas <-
         system = as.numeric(district_number),
         school = as.numeric(school_number),
         # Rule 3, Line 41: TVAAS 4 or 5 in All Content Areas for Two Years
-        # Q: Which content areas count for our purposes here?
+        # Q: Which content areas count for our purposes here? Correct below
         exit = as.numeric(pmin(literacy, numeracy) > 3)
       ) %>%
       inner_join(schools_priority_2018 %>% select(system, school))
@@ -501,6 +510,10 @@ summary(priority_exit$exit)
 
 # Q: Should we assign an F to each CSI school or only each Priority school?
 # Probably only Priority schools
+
+# Q: Should I write the updated grades to the accountability file instead of
+# school_grading_grades?
+# In the future, both
 grades_new <-
   grades_2018
 
